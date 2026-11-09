@@ -1,0 +1,30 @@
+# 运行时日志：脚本每次重启都会往 scripts/logs/ 写一份，含时间戳、用户名、
+# 进程 pid 等本机信息。属于运行时产物，不入库（2026-11-09 建仓时 69 个文件，312K）。
+scripts/logs/
+*.log
+
+# 重启状态目录的本地副本（真实状态在 ~/.dsh/dsh-auto-restart/）
+*.local.*
+startup-plan.json
+
+# 依赖
+node_modules/
+.pnpm-store/
+
+# 测试临时产物
+coverage/
+.nyc_output/
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 临时 / 备份
+*.bak
+*.bak-*
+*.orig
+*.rej
+*.tmp

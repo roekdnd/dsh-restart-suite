@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Restart App",
+    "description": "Restart from agent or button, then wake and resume affected sessions."
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "name": "dsh-restart-suite",
+  "version": "0.1.2",
+  "type": "module",
+  "description": "重启应用：agent/按钮两条入口的重启，以及重启后的唤醒与续跑善后。",
+  "license": "MIT",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "test": "node --test --test-timeout=30000 test/*.mjs"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "core/",
+    "engine/",
+    "after/",
+    "scripts/",
+    "test/*.mjs",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
