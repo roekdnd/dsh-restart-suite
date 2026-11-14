@@ -125,3 +125,63 @@ test('dsh.client 声明的 external 必须是数组（缺失即 []）', () => {
     assert.ok(Array.isArray(client.external), 'dsh.client.external 必须是数组')
   }
 })
+
+test('声明了 license 就必须有 LICENSE 文件', () => {
+  // 2026-11-14：package.json 写着 "license": "MIT"，但仓库里没有任何
+  // LICENSE / LICENCE / COPYING。元数据承诺了授权，文件却没落地 ——
+  // 别人 clone 下来拿不到授权条款，严格说是不许用的。
+  const declared = pkg.license
+  if (!declared) return
+  const 候选 = ['LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENCE', 'COPYING']
+  const 命中 = 候选.filter((n) => existsSync(join(包根, n)) && statSync(join(包根, n)).size > 0)
+  assert.ok(
+    命中.length > 0,
+    'package.json 声明 license="' + declared + '"，但仓库里没有非空的 ' + 候选.join(' / '),
+  )
+  // 内容是 MIT 就必须自称 MIT，别把别的许可证正文塞进 MIT 文件
+  const 正文 = readFileSync(join(包根, 命中[0]), 'utf8')
+  if (/^MIT$/i.test(declared)) {
+    assert.match(正文, /MIT License/, '声明 MIT，但 LICENSE 正文里没有 "MIT License"')
+    assert.match(正文, /Permission is hereby granted, free of charge/, 'LICENSE 缺少 MIT 的授权段落')
+  }
+})
+
+test('files[] 必须包含 LICENSE 与 README（否则 npm pack 会丢）', () => {
+  // files[] 是白名单：没列进去的文件在 `npm pack` 时会被丢掉。
+  // 2026-11-09 已因漏列 locale/*.json 踩过一次「每次升级都丢」。
+  const files = pkg.files ?? []
+  if (!pkg.license) return
+  assert.ok(
+    files.some((f) => /^LICEN[CS]E/i.test(f)),
+    '声明了 license 却没有把 LICENSE 写进 files[]，发布时会被丢掉：' + JSON.stringify(files),
+  )
+  assert.ok(
+    files.some((f) => /^README/i.test(f)),
+    'README 不在 files[] 里，发布时会被丢掉：' + JSON.stringify(files),
+  )
+})
+
+test('README 里引用的仓库内文件都必须真实存在', () => {
+  // 2026-11-14：README 曾写「理由见 `rules/references_icons.local.md`」，
+  // 而那个文件在工作区根目录（插件仓库之外），也不在 files[] 里。
+  // 外部读者 clone 本仓库后点不到 —— README 里的路径必须指向本仓库内。
+  const md = readFileSync(join(包根, 'README.md'), 'utf8')
+  const 候选 = [...md.matchAll(/`([A-Za-z0-9_@./-]+\.(?:md|mjs|js|json|yml|ps1|txt))`/g)].map((m) => m[1])
+  // 不是「本仓库内文件」的合法引用，必须逐条写明理由 —— 不许沉默地放宽。
+  const 白名单 = {
+    // 运行时状态文件写在 ~/.dsh/ 下，README 里只是举例，不是仓库内容
+    'settings.json': '运行时状态目录',
+    'roster.json': '运行时状态目录',
+    'wake-request.json': '运行时状态目录',
+    'launch-plan.json': '运行时状态目录',
+    // 第三方包内部路径：README 用它指出 CLI 到底在哪一行拒绝 desktop profile
+    '@deepseek-ai/dsh/lib/bin.js': '第三方包路径，非本仓库内容',
+    // 已移除的文件：README 只在「已知缺口」里作为历史说明提到
+    'after/sweep.js': '已移除，仅作历史说明',
+  }
+  const 缺失 = [...new Set(候选)].filter((rel) => {
+    if (rel in 白名单) return false
+    return !existsSync(join(包根, rel))
+  })
+  assert.deepEqual(缺失, [], 'README 引用了不存在的仓库内文件：' + 缺失.join(', '))
+})

@@ -8,6 +8,48 @@
 
 三者合并后共用**一份清单**（roster），从结构上杜绝「同一个会话在一次重启里被投递两次」。
 
+## 安装
+
+本插件是 **bundle**（`package.json` 的 `dsh.bundle.patch` → `cordis.patch.yml`），
+不是纯 UI 插件：它同时挂了 host 半边（`index.js`，提供 `restart_dsh` 工具和
+`/dsh-restart-suite/api` 路由）和浏览器半边（`client.js`，7 个界面座位）。
+所以必须由宿主在**启动时**把它插进 cordis 树 —— 不能运行时动态加载。
+
+### 从应用内安装
+
+打开应用 → **设置 → 插件**，选本包（本地目录 / `npm pack` 产物 / 市场条目都行）。
+装完**重启一次**才生效：host 半边和客户端模块都只在启动时装载。
+
+装成这样验证：
+
+| 检查点 | 期望 |
+|---|---|
+| 侧栏左上角 | 出现「重启应用」行 |
+| 设置页 | 出现「重启应用」一节（含倒计时/唤醒词默认值） |
+| 会话标题栏 | 出现 ⟳ 按钮 |
+| 工具列表 | 有 `restart_dsh` |
+| `~/.dsh/dsh-auto-restart/logs/plugin-load.log` | 有新的 `apply 开始 pid=…` 一行 |
+
+最后一行是唯一可靠的判据：界面没出来、日志却已经有新 `apply`，说明是前端座位
+注册的问题；日志里根本没新 `apply`，说明宿主没加载到本包。
+
+> ⚠️ **不要用 `dsh plugin --profile desktop add …`。**
+> 桌面端 profile 由 Electron 应用独占管理，CLI 会直接拒绝：
+> `profile "desktop" is managed exclusively by the Electron application`
+> （`@deepseek-ai/dsh/lib/bin.js` 的 `rejectElectronProfile()`；只有 desktop host
+> 自带 `manageDesktopProfile: true` 时才放行）。桌面端正规入口只有「应用内插件页」。
+
+### 本地开发（link 装法）
+
+profile 的 `dependencies` 用 `link:` 指向本目录，改源码后重启即生效，不用重装：
+
+```json
+"dsh-restart-suite": "link:C:/path/to/plugins/dsh-restart-suite"
+```
+
+**还要把包名写进同一个 `package.json` 的 `dsh.profile.bundles`**，否则
+`cordis.patch.yml` 不会被应用，插件等于没装。
+
 ## 两个入口，同一套判定
 
 | 入口 | 触发 | 判定链路 |
@@ -114,7 +156,25 @@
 
 图标档位两处不同：`sidebar.panellist` 用 **regular（1）**（与「更多」同列同档），
 `settings.section.icon` 用 **medium（1.3）**（与官方 `navIcon()` 兜底同档）。
-理由见 `rules/references_icons.local.md`。
+
+为什么必须分开——官方图标只有两档线宽，**档位按座位对齐邻近的官方图标，不是全局统一**：
+
+| 座位 | 邻近的官方图标 | 档位 | 尺寸 |
+|---|---|---|---|
+| `sidebar.panellist` | 同一列的「更多」 | regular = `1` | `16`（窄）/ `18` |
+| `settings.section.icon` | `navIcon()` 兜底（如设置齿轮） | medium = `1.3` | `16` |
+
+三条要点：
+
+1. `stroke-width` 挂在 `<svg>` 上，**不要挂在 `<path>` 上** —— 官方就是
+   `<svg … stroke-width="…">` + `<path stroke="currentColor">`。
+2. path 数据**逐字抄官方** `refresh-outline`，不要自己画：官方坐标在 16×16 网格上
+   已经对过视觉重心。
+3. **不要加** `strokeLinecap: 'round'` / `strokeLinejoin: 'round'` —— 圆头等于两端
+   各撑粗半个线宽，16px 上就是「加粗一档」，用户会直接看出颜色不对。
+
+线宽只要不是 `1` 或 `1.3`，就一定被看出来。参考实现与钉住这两件事的测试见
+`client.js` 的 `RefreshIcon` 和 `test/client-smoke.test.mjs`。
 
 **`sidebar.footer.action` 没有注册**：侧栏底部按钮与左上角面板功能重复，
 按用户反馈去掉。
@@ -141,6 +201,7 @@ npm test
 | `test/suite-integration.test.mjs` | 装配层：读清单 → 投递 → 清理 |
 | `test/client-smoke.test.mjs` | 浏览器 bundle：座位注册、8 个 phase 渲染、按钮行为 |
 | `test/manifest-integrity.test.mjs` | `package.json` 的承诺是否兑现（见下） |
+| `test/unload-cleanup.test.mjs` | 卸载后必须停表（不再对已卸载的插件拉起脚本）、日志滚动、请求体上限、坏清单隔离文件不再累积 |
 
 ### `manifest-integrity` 为什么必须有
 
