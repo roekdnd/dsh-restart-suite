@@ -393,7 +393,7 @@ grep "无人查看，超时兜底" ~/.dsh/dsh-auto-restart/logs/restart-*.log
 |---|---|---|
 | 侧栏/底部/会话头/设置行 四个按钮入口 | restart-now | ❌ 未实现（本次只补了 overlay + settings.section） |
 | 按钮入口的逐项开关 | restart-now | ❌ 未实现 |
-| 崩溃续跑（interrupted-resume） | interrupted-resume | ⚠️ `after/sweep.js` 有全量扫描，待核对覆盖度 |
+| 崩溃续跑（interrupted-resume） | interrupted-resume | ❌ 已移除（2026-11-10）：原 `after/sweep.js` 从未接线，`scanOnce` 无任何调用方 |
 
 也就是说：**重启的"按钮"入口目前是空的**，只有 agent 调 `restart_dsh` 这条路。
 如果这是有意的（先保 agent 路径），建议在 README 里写明；如果不是，

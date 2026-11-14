@@ -19,11 +19,20 @@
  *   bystander          → text 为 null，由插件生成「先核对再继续」
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 export const ROSTER_FILE_NAME = 'roster.json'
 export const ROSTER_SCHEMA = 1
+
+/**
+ * 坏清单隔离文件保留几份。
+ *
+ * 每次读到坏清单就 `renameSync` 成 `roster.json.corrupt-<时间戳>` 留证，但原来
+ * 没有任何清理 —— 如果某个第三方脚本反复用非原子方式覆盖 roster，这些文件会
+ * 在 state 目录里持续累积。留 3 份足够对比排查，再多只是占地方。
+ */
+const CORRUPT_KEEP = 3
 
 /** 一次重启的合法阶段。 */
 export const PHASES = ['starting', 'ready', 'delivering', 'done']
@@ -140,6 +149,33 @@ export function writeRoster(stateDir, roster) {
 }
 
 /**
+ * 只保留最近 CORRUPT_KEEP 份坏清单隔离文件。
+ *
+ * 文件名是 `roster.json.corrupt-<毫秒时间戳>`，时间戳定长 13 位，所以**字典序
+ * 就是时间序**，直接排序取后 N 个即可，不需要解析时间。
+ *
+ * 失败一律忽略：清理只是防止无限增长，绝不该因为它让读清单失败。
+ */
+function pruneCorrupt(stateDir) {
+  try {
+    const 前缀 = `${ROSTER_FILE_NAME}.corrupt-`
+    const 候选 = readdirSync(stateDir)
+      .filter((n) => n.startsWith(前缀))
+      .sort()
+    const 多余 = 候选.length - CORRUPT_KEEP
+    for (let i = 0; i < 多余; i += 1) {
+      try {
+        unlinkSync(join(stateDir, 候选[i]))
+      } catch {
+        // 删不掉就留着，不影响这次读取
+      }
+    }
+  } catch {
+    // 目录读不了就算了
+  }
+}
+
+/**
  * 读清单。文件不存在 → null；内容坏掉 → null 并把原文件改名留证。
  *
  * @returns {{roster: object|null, warnings: string[]}}
@@ -164,6 +200,7 @@ export function readRoster(stateDir, { quarantine = true } = {}) {
       try {
         renameSync(file, `${file}.corrupt-${Date.now()}`)
         warnings.push('坏清单已改名留存，便于排查')
+        pruneCorrupt(stateDir)
       } catch {
         warnings.push('坏清单改名失败')
       }

@@ -138,11 +138,11 @@ test('同一份清单跑两遍不会重复投递（幂等的结构保证）', as
   assert.equal(投递.length, 0, '已投过的绝不能再投')
 })
 
-test('没有清单时不崩，走全量扫描', async () => {
+test('没有清单时不崩，也不投递任何会话（兜底扫描已移除）', async () => {
   rmSync(rosterPath(STATE), { force: true })
   const { 投递 } = 搭()
   for (let i = 0; i < 40; i++) { mock.timers.tick(500); await new Promise((r) => setImmediate(r)) }
-  assert.equal(投递.length, 0, '没有清单 + 没有候选会话 → 不投')
+  assert.equal(投递.length, 0, '没有清单 → 本次没有任何会话需要唤醒，不得凭空投递')
 })
 
 test('roster 工具能查看和清理', async () => {

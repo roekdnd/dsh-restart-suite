@@ -17,7 +17,7 @@
  * 注意：HTTP 路由只服务于**本插件自己的界面**，不是给外部脚本轮询的公开 API。
  */
 import { spawn } from 'node:child_process'
-import { appendFileSync, mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -650,17 +650,52 @@ function launchScript(scriptPath, command, autoSay, commandTimeoutSec, webPort, 
       return
     }
 
+    /**
+     * 输出上限：只保留尾部这么多字节。
+     *
+     * `finish()` 最终只用最后 4000 字节，但原来是把**全量**输出先攒进
+     * `chunks`、最后才 `slice(-4000)`——峰值是整份输出 + 一份拼接副本。
+     * 脚本卡住时（超时且 kill 不掉），这个缓冲区会一直涨。这里改成边收边裁。
+     */
+    const 输出上限 = 64 * 1024
+    let 已收字节 = 0
+    const 收输出 = (chunk) => {
+      // finish() 之后流可能还会来数据（超时路径已经把 Promise 结了），
+      // 不再收，否则缓冲区在结论给出后仍然被人写。
+      if (settled) return
+      chunks.push(chunk)
+      已收字节 += chunk.length
+      while (已收字节 > 输出上限 && chunks.length > 1) {
+        已收字节 -= chunks.shift().length
+      }
+      // 单块就超上限时，只留尾部
+      if (chunks.length === 1 && chunks[0].length > 输出上限) {
+        chunks[0] = chunks[0].subarray(chunks[0].length - 输出上限)
+        已收字节 = 输出上限
+      }
+    }
+
     const timer = setTimeout(() => {
+      // 先给结论，再拆管道：这样 destroy() 触发的 close 会因为 settled 直接返回。
+      finish({ ok: false, error: `脚本 ${LAUNCH_TIMEOUT_MS / 1000} 秒内没有返回` })
       try {
         child.kill()
       } catch {
-        // 杀不掉也没关系，下面照样给结论
+        // 杀不掉也没关系，下面照样断开引用
       }
-      finish({ ok: false, error: `脚本 ${LAUNCH_TIMEOUT_MS / 1000} 秒内没有返回` })
+      // kill 失败时，子进程和它的管道句柄会一直挂在父进程上 —— 断开流引用并
+      // unref，至少让它们不再钉住这个进程和这块内存。
+      try {
+        child.stdout?.destroy()
+        child.stderr?.destroy()
+      } catch {
+        /* 已经关了 */
+      }
+      if (typeof child.unref === 'function') child.unref()
     }, LAUNCH_TIMEOUT_MS)
 
-    if (child.stdout) child.stdout.on('data', (chunk) => chunks.push(chunk))
-    if (child.stderr) child.stderr.on('data', (chunk) => chunks.push(chunk))
+    if (child.stdout) child.stdout.on('data', 收输出)
+    if (child.stderr) child.stderr.on('data', 收输出)
     child.on('error', (err) => {
       clearTimeout(timer)
       finish({ ok: false, error: '脚本进程异常：' + String(err) })
@@ -1282,10 +1317,35 @@ function jsonResponse(res, status, body) {
   }
 }
 
-async function readJsonBody(req) {
+/**
+ * 读取并解析 JSON 请求体。
+ *
+ * 有长度上限：这个接口只服务设置页（几个标量字段），正常请求不过几百字节。
+ * 原来会把请求体全量攒进内存，本机任意进程都能 POST 一个超大 body 把宿主堆打满。
+ * 门禁（回环地址 + 自定义头 + 同源）挡住了外部网页，但挡不住本机进程。
+ *
+ * 超限时直接销毁连接并返回空对象 —— 交给调用方按「没给参数」处理，
+ * 而不是让一个畸形请求把进程拖垮。
+ */
+const MAX_JSON_BODY_BYTES = 64 * 1024
+
+async function readJsonBody(req, 上限 = MAX_JSON_BODY_BYTES) {
   if (typeof req[Symbol.asyncIterator] !== 'function') return {}
   const chunks = []
-  for await (const chunk of req) chunks.push(chunk)
+  let 已收字节 = 0
+  for await (const chunk of req) {
+    已收字节 += chunk.length
+    if (已收字节 > 上限) {
+      // 主动断开，不要继续读 —— 继续读等于帮对方把内存吃满。
+      try {
+        req.destroy()
+      } catch {
+        /* 已经断了 */
+      }
+      return {}
+    }
+    chunks.push(chunk)
+  }
   const text = Buffer.concat(chunks).toString('utf8').trim()
   if (!text) return {}
   try {
@@ -1296,20 +1356,49 @@ async function readJsonBody(req) {
   }
 }
 
+/**
+ * 单个日志文件的上限。超过就滚成 `.1`（只留一份历史）。
+ *
+ * 为什么需要：`prune()` 只清 `restart-*.log`（每次重启一个文件，按数量留最近
+ * N 个），而 `plugin.log` / `plugin-load.log` 是**同一个文件跨重启一直追加**的
+ * 常驻日志。这个插件每次重启前会写好十几行，再加上每次 apply 都写 `trace`，
+ * 两个文件只增不减，没有任何上限。这是磁盘增长，不是堆增长，但同属"无界"。
+ */
+const LOG_FILE_MAX_BYTES = 2 * 1024 * 1024
+
+/** 追加一行；文件超过上限就先滚成 `.1` 再写。失败一律忽略。 */
+export function appendLogLine(file, line) {
+  try {
+    mkdirSync(LOG_DIR, { recursive: true })
+    try {
+      if (statSync(file).size > LOG_FILE_MAX_BYTES) {
+        // renameSync 在目标已存在时会覆盖（Windows 上会抛，所以先删）。
+        try {
+          rmSync(`${file}.1`, { force: true })
+        } catch {
+          /* 删不掉就让下面的 rename 自己失败 */
+        }
+        try {
+          renameSync(file, `${file}.1`)
+        } catch {
+          // 滚不动就直接清空，总比无限增长好
+          rmSync(file, { force: true })
+        }
+      }
+    } catch {
+      // statSync 失败通常表示文件还不存在 —— 正常
+    }
+    appendFileSync(file, line, 'utf8')
+  } catch {
+    // 写不进去不影响插件
+  }
+}
+
 export function apply(ctx, config = {}) {
   // 加载痕迹：热重载时最容易出问题的地方就是这里“悄悄没跑”，
   // 所以每一步都往 plugin-load.log 里落一行。写不进去也不影响插件。
   const trace = (text) => {
-    try {
-      mkdirSync(LOG_DIR, { recursive: true })
-      appendFileSync(
-        join(LOG_DIR, 'plugin-load.log'),
-        `[${new Date().toISOString()}] ${text}\n`,
-        'utf8',
-      )
-    } catch {
-      // ignore
-    }
+    appendLogLine(join(LOG_DIR, 'plugin-load.log'), `[${new Date().toISOString()}] ${text}\n`)
   }
 
   trace(`apply 开始 pid=${process.pid}`)
@@ -1327,16 +1416,7 @@ export function apply(ctx, config = {}) {
       // ignore
     }
     // 再落地一份：宿主控制台在重启、崩溃之后就没了，文件还能查。
-    try {
-      mkdirSync(LOG_DIR, { recursive: true })
-      appendFileSync(
-        join(LOG_DIR, 'plugin.log'),
-        `[${new Date().toISOString()}] ${message}\n`,
-        'utf8',
-      )
-    } catch {
-      // ignore
-    }
+    appendLogLine(join(LOG_DIR, 'plugin.log'), `[${new Date().toISOString()}] ${message}\n`)
   }
 
   const scriptPath =
@@ -1516,10 +1596,17 @@ export function apply(ctx, config = {}) {
    *
    * 脚本写 ready 表示「应用真起来了」。此前投递只会白等 ——
    * sessionController 那时还没注册好。
+   *
+   * @param {string} runId - 本轮运行的 id，用于确认读到的是自己的清单
+   * @param {() => boolean} [还活着] - 每轮检查一次；返回 false 立即放弃。
+   *   插件卸载后这个循环原本会继续跑满 120 秒，一来让进程迟迟退不掉，
+   *   二来可能朝已经销毁的 ctx 投递消息。调用方传 `() => !stopped`。
    */
-  const 等清单就绪 = async (runId) => {
+  const 等清单就绪 = async (runId, 还活着 = () => true) => {
     const deadline = Date.now() + 120_000
     while (Date.now() < deadline) {
+      // 卸载即退出，不要把这个循环跑满超时。
+      if (!还活着()) return null
       const { roster } = readRoster(STATE_DIR)
       if (!roster) return null
       if (roster.runId && runId && roster.runId !== runId) {
@@ -1542,7 +1629,11 @@ export function apply(ctx, config = {}) {
           return roster
         }
       }
-      await new Promise((r) => setTimeout(r, 500))
+      await new Promise((r) => {
+        const t = setTimeout(r, 500)
+        // 别让这个等待独自撑住进程退出。
+        if (typeof t.unref === 'function') t.unref()
+      })
     }
     return null
   }
@@ -1576,6 +1667,26 @@ export function apply(ctx, config = {}) {
 
   const 标题缓存 = new Map()
   const 标题TTL_MS = 30_000
+  /**
+   * 上限。这个缓存的 key 是 sessionId，而每次 `snapshot()`（客户端每 300 ms～
+   * 5 s 拉一次 `/state`）都会为当前阻塞项（最多 8 个）和发起会话各查一次标题。
+   * 子代理每个都是独立 sessionId，所以 key 只增不减；TTL 只决定"读的时候算不算
+   * 命中"，不会把别的 key 删掉。加一条硬上限，按插入顺序丢最老的。
+   */
+  const 标题缓存上限 = 200
+  const 收标题 = (id, title) => {
+    标题缓存.set(id, { title, at: Date.now() })
+    if (标题缓存.size <= 标题缓存上限) return
+    // 先清已经过期的，通常这一步就够了
+    const 过期线 = Date.now() - 标题TTL_MS
+    for (const [k, v] of 标题缓存) {
+      if (v.at < 过期线) 标题缓存.delete(k)
+    }
+    // 还是超就按插入顺序丢最老的（Map 的迭代顺序即插入顺序）
+    while (标题缓存.size > 标题缓存上限) {
+      标题缓存.delete(标题缓存.keys().next().value)
+    }
+  }
   const 会话标题 = (sessionId) => {
     const id = String(sessionId || '')
     if (!id) return ''
@@ -1594,7 +1705,7 @@ export function apply(ctx, config = {}) {
     } catch {
       title = ''
     }
-    标题缓存.set(id, { title, at: Date.now() })
+    收标题(id, title)
     return title
   }
 
@@ -1687,6 +1798,32 @@ export function apply(ctx, config = {}) {
    * 方案 3 用它判断「能不能安全打断」—— 只有这一轮已经结束的会话才允许放行。
    */
   const 本轮结束 = new Map()
+  /**
+   * 两个轮次表的上限与裁剪。
+   *
+   * 每收到一条 `turn/start` / `turn/end` 就会 `set` 一条，而 key 是 sessionId
+   * —— 每个子代理都是独立 id，所以长时间开着的进程会稳定累积。这两张表只服务
+   * 于 `waiting` 阶段的判定，历史条目没有价值，直接按插入顺序淘汰最老的即可。
+   *
+   * 注意：**不能**在 turn/end 里直接删 `本轮起点`。`classifyStrangers` 依赖
+   * 「结束时刻 >= 开始时刻」的成对比较，拆掉一半会让那个判断失去依据。
+   * 这里只在终点表超过上限时淘汰「连起点都早已不在」的 key。
+   */
+  const 轮次表上限 = 500
+  const 裁剪轮次表 = () => {
+    if (本轮结束.size <= 轮次表上限) return
+    for (const 老id of 本轮结束.keys()) {
+      if (本轮结束.size <= 轮次表上限) break
+      if (!本轮起点.has(老id)) 本轮结束.delete(老id)
+    }
+    // 起点表同样封顶；它比终点表保留得久一点没有坏处，但不能无界。
+    if (本轮起点.size > 轮次表上限) {
+      for (const 老id of 本轮起点.keys()) {
+        if (本轮起点.size <= 轮次表上限) break
+        本轮起点.delete(老id)
+      }
+    }
+  }
   /**
    * 倒计时是否还没起表（等页面把自己画出来）。
    *
@@ -2119,6 +2256,19 @@ export function apply(ctx, config = {}) {
   const finishCountdown = async (options = {}) => {
     const pending = pendingRestart
     pendingRestart = null
+    // 这一轮请求已经被取走，等待队列也随之作废。放在判空之前：即使
+    // pending 是空的（重复调用、状态错乱），也不该让队列里的陈旧条目留到下一轮。
+    //
+    // 为什么清空不会漏唤醒 ——
+    //   · 正常路径：`extraWake` 里已经装着完整名单（见 launchAfterGather：
+    //     `extraWake: 名单`），投递时按它逐个唤醒；
+    //   · 回炉路径（下面 `startGather(pending, ...)`）：显式重新
+    //     `upsertWaiter(pending)` + 把 `extraWake` 逐条放回队列；
+    //   · 取消/超时路径：本来就会把队列里的人逐个 reportFailure。
+    //
+    // 不清的后果：走普通工具入口时队列里若残留着上一次的条目，下次重启会把
+    // 早已过期的会话当成"正在等的人"一起写进唤醒清单。
+    waiters.length = 0
     if (!pending) return
     const { command, autoSay, timeoutSec, sessionId } = pending
     let wakeMode = pending.wakeMode
@@ -2150,6 +2300,32 @@ export function apply(ctx, config = {}) {
       )
       if (硬拦.length === 0) {
         blockersAtEnd.length = 0 // 只剩软拦，允许动手
+      }
+    }
+
+    // 收尾窗口的复核：如果剩下的阻塞项**只有发起会话自己**，放行。
+    //
+    // 为什么必须这么做：这条路径由 `kickSettle()` 触发 —— 而它只在收到该会话的
+    // `turn/end(completed|error)` 时才调。也就是说，此刻我们已经拿到了
+    // 「这一轮结束了」的**明确事件**；此时 `agents` 服务报的 `running` 是
+    // 状态同步滞后，不是「还在干活」。
+    //
+    // 2026-11-10 实测：日志里连续出现「已收到 turn/end(completed)，立刻动手」
+    // 紧跟着「仍有 1 处在忙，放弃重启」，重启永远无法通过收尾窗口完成。
+    //
+    // ⚠️ 必须放在 `if (blockersAtEnd.length > 0)` **之前**：放行意味着这一次
+    // 不需要「等别人」也不需要「放弃」，而是直接往下走 launch。
+    // 早先把它写在 if 块内部（只清空数组不跳出），日志会出现荒诞的
+    // 「仍有 0 处在忙，放弃重启」—— 数组空了，却仍然执行了放弃分支。
+    if (options.fromSettle && blockersAtEnd.length > 0) {
+      const 只自己收尾 =
+        sessionId !== '' && blockersAtEnd.every((b) => isSelfBlocker(b, sessionId))
+      if (只自己收尾) {
+        logger.line(
+          `收尾窗口复核：只剩发起会话自己（${sessionId}）的滞后状态，` +
+            '已收到它的 turn/end(completed)，放行',
+        )
+        blockersAtEnd.length = 0
       }
     }
 
@@ -2771,6 +2947,7 @@ export function apply(ctx, config = {}) {
       if (event.type === 'turn/start' && sid) {
         const t = Number(event.time ?? 0)
         if (t > 0) 本轮起点.set(sid, t)
+        裁剪轮次表()
         // 有人开跑 → 可能变成新的硬拦项，重判一次把状态与界面刷准。
         kickGather('turn/start')
         return
@@ -2783,6 +2960,7 @@ export function apply(ctx, config = {}) {
         const t = Number(event.time ?? 0)
         if (t > 0) 本轮结束.set(sessionId, t)
         else 本轮结束.set(sessionId, Date.now())
+        裁剪轮次表()
       }
       // 有人跑完了 → 这是等人齐的主信号，立刻重判一次（不用等兜底扫描）。
       kickGather('turn/end')
@@ -2905,10 +3083,24 @@ export function apply(ctx, config = {}) {
     }
   }, `${name}: restart_dsh 工具`)
 
-  // ── 启动后善后：先按 roster 投递，再全量扫描兜底 ─────────────────────
+  // ── 启动后善后：按 roster 清单投递 ────────────────────────────────────
   //
-  // 顺序不能反：先精确（按清单、带 role 语义），后兜底（无清单的崩溃场景）。
-  // 两者共用一条过滤 —— 清单里出现过的会话，扫描时必须跳过，否则投两次。
+  // 只管「自己发起的那次重启」：重启前把「谁在等、说什么」写进清单，重启后
+  // 对照清单投递。这是唯一的续跑路径。
+  //
+  // 曾经这里还有第二层「全量扫描兜底」（after/sweep.js，从 dsh-interrupted-resume
+  // 搬来），用于断电/崩溃/强杀这类**没有清单**的场景。它已被移除，原因是：
+  //
+  //   1. 它从未被接上——`scanOnce` 没有任何调用方，日志却写着"只走全量扫描"，
+  //      等于在报告一件没有发生的事；
+  //   2. 接上的风险大于收益：它要求调用方先把「清单里已有的会话」过滤掉，否则
+  //      清单投一次、扫描再投一次，同一个任务会被跑两遍（可能重复改文件、重复
+  //      执行命令）。而两者的时间窗是重叠的（roster 在重启后几秒投递，扫描的
+  //      静置期只有 30 秒）；
+  //   3. 实际命中率很低：历史账本 124 次扫描只真正续跑 3 次。
+  //
+  // 代价：崩溃/强杀后被中断的会话不会自动续跑，需要手动继续。日常的主动重启
+  // 不受影响。
   ctx.effect(() => {
     let stopped = false
     const timer = setTimeout(() => {
@@ -2917,14 +3109,12 @@ export function apply(ctx, config = {}) {
         const { roster: initial, warnings } = readRoster(STATE_DIR)
         for (const w of warnings) logger.line(`清单告警：${w}`)
 
-        let 清单里的会话 = new Set()
         if (initial) {
-          清单里的会话 = new Set(initial.sessions.map((x) => x.id))
           logger.line(
             `发现重启清单：runId=${initial.runId} phase=${initial.phase} ` +
               `sessions=${initial.sessions.length}`,
           )
-          const roster = await 等清单就绪(initial.runId)
+          const roster = await 等清单就绪(initial.runId, () => !stopped)
           if (roster) {
             const 结果 = await deliverAll({
               roster,
@@ -2947,7 +3137,11 @@ export function apply(ctx, config = {}) {
             logger.line('等待清单就绪超时，本次不做 roster 投递')
           }
         } else {
-          logger.line('没有重启清单（可能是崩溃/外部重启），只走全量扫描')
+          // 说清楚"没有做什么"，不要让人以为有兜底在跑。
+          logger.line(
+            '没有重启清单（可能是崩溃/外部重启）：本次没有会话需要唤醒。' +
+              '被中断的会话需手动继续（自动续跑兜底已移除）',
+          )
         }
       })()
     }, 200)
@@ -3106,6 +3300,36 @@ export function apply(ctx, config = {}) {
     })
   })
 
+  // ── 卸载时释放定时器与本次 apply 的全部状态 ────────────────────────────
+  //
+  // 这一条不是"顺手清理"，而是**必需的**：`stopCountdown()` 原本只在业务路径
+  // 里被调用，卸载时没人叫它，于是
+  //
+  //   · `setInterval(tick, 200)` 会继续跑（它只看 `state.phase`，而卸载不会
+  //     改状态机，所以 phase 仍是 `counting`/`waiting`）；
+  //   · `tick` 到点还会 `void finishCountdown()` —— **对已经卸载的插件真的去
+  //     spawn 重启脚本**；
+  //   · `waiting` 分支的 `gatherTimer` 每 15 秒自我续期，无上限地跑下去；
+  //   · 定时器闭包把整个 apply 作用域（ctx / services / settings / state /
+  //     logger / 两个轮次 Map / 标题缓存）一直钉在堆上。
+  //
+  // 也就是说：它同时是内存泄漏和"插件卸了还在重启应用"的行为事故。放在最后
+  // 注册是有意的 —— 清理时先停表，再清状态，顺序与依赖方向一致。
+  ctx.effect(
+    () => () => {
+      stopCountdown()
+      gathering = false
+      awaitingViewer = false
+      settleUsed = false
+      pendingRestart = null
+      waiters.length = 0
+      本轮起点.clear()
+      本轮结束.clear()
+      标题缓存.clear()
+    },
+    `${name}: 卸载时停止倒计时并释放状态`,
+  )
+
   log(`已加载（脚本 ${scriptPath}）`)
 }
 
@@ -3149,4 +3373,7 @@ export const __test = {
   planFilePath,
   writePlanFile,
   PLAN_FILE,
+  // 请求体读取：超限必须丢弃，否则本机进程能 POST 一个巨体把堆打满。
+  readJsonBody,
+  MAX_JSON_BODY_BYTES,
 }
