@@ -261,7 +261,7 @@ cd plugins/dsh-restart-suite && npm test
 | 新崩溃日志 | **无**（此前每次启动必产一份） |
 | `plugin-load.log` | `11:22:24 apply 开始 pid=37220` → `restart_dsh 注册成功` → `webServer 注入回调已进入` ✅ |
 | API 路由 | `GET /dsh-restart-suite/api/state` 无头 → **403**（门禁生效）；带头 → **200** `{"phase":"idle",...}` ✅ |
-| 进程 | 8 个 `AI Assistant.exe`，两个端口在 listen ✅ |
+| 进程 | 8 个 `DeepSeek Harness.exe`，两个端口在 listen ✅ |
 
 > `/plugins/*` 从 curl 拿 404 是**正常**的：`GET /` 直接返回
 > `401 dsh web authentication required`，bundle 路由在鉴权后面。
@@ -322,7 +322,7 @@ for (const [key, rel] of Object.entries(pkg.exports)) {
 ### L17. 排查时注意工具输出可能改写非 ASCII 路径
 
 本次排查中，我在 PowerShell / Node 的输出里反复看到安装目录被渲染成
-`C:\AI\Deepseek Runtime`，而磁盘上的真实目录名是 `Deepseek Runtime`。
+`C:\AI\Deepseek Harness`，而磁盘上的真实目录名是 `Deepseek Harness`。
 于是字面量拼出来的路径 `ENOENT`，而枚举出来的路径正常——这个矛盾浪费了一轮排查。
 
 **规则**：路径排查先按码点核对，不要相信打印出来的字符串：
