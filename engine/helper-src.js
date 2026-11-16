@@ -33,7 +33,7 @@ export const RELISTEN_POLL_MS = 500;
 /** macOS 停机宽限（v1.3.0）：先 SIGTERM 给 Electron 主进程一个体面退出的机会，超时才 SIGKILL。
  *  Windows 没有等价语义（taskkill 只有强杀），保持原样。 */
 export const MAIN_STOP_GRACE_MS = 10000;
-/** 助手脚本支持的平台（与 lib/environment.js 的 SUPPORTED_PLATFORMS 一致，单测交叉校验）。 */
+/** 助手脚本支持的平台（与 engine/environment.js 的 SUPPORTED_PLATFORMS 一致，单测交叉校验）。 */
 export const HELPER_PLATFORMS = Object.freeze(['win32', 'darwin']);
 
 /**

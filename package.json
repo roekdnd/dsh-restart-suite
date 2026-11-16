@@ -4,6 +4,23 @@
   "type": "module",
   "description": "重启应用：agent/按钮两条入口的重启，以及重启后的唤醒与续跑善后。",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/roekdnd/dsh-restart-suite.git"
+  },
+  "homepage": "https://github.com/roekdnd/dsh-restart-suite#readme",
+  "bugs": {
+    "url": "https://github.com/roekdnd/dsh-restart-suite/issues"
+  },
+  "author": "roekdnd",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "restart",
+    "session-resume",
+    "windows"
+  ],
   "main": "./index.js",
   "exports": {
     ".": "./index.js",

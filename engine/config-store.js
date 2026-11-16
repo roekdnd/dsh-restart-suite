@@ -1,4 +1,4 @@
-// lib/config-store.js —— 配置持久层（v0.8 自绘表单的底层）。
+// engine/config-store.js —— 配置持久层（v0.8 自绘表单的底层）。
 // 背景（真机勘误）：宿主设置页不读取插件的 schemastery Config 导出（plugins.bundle.config
 // 只渲染 patch 条目里已声明的 config），所以配置项由插件自绘表单 + 本模块持久化。
 // 优先级：代码默认 < patch 条目 config（apply 第二参） < 配置文件（本模块读写）。

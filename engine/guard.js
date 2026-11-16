@@ -1,4 +1,4 @@
-// lib/guard.js —— Q6 安全围栏 v0.6（桌面构建感知版）。
+// engine/guard.js —— Q6 安全围栏 v0.6（桌面构建感知版）。
 // 参照 dshmarket restart.ts:207 directLoopbackRequest / :237 trustedRestartRequest、
 // http.ts:134 loopbackAuthority、:142 sameOrigin。
 //

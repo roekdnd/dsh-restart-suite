@@ -1,7 +1,7 @@
-// lib/schema.js —— 设置页表单 schema（@deepseek-ai/schemastery 可选依赖）。
+// engine/schema.js —— 设置页表单 schema（@deepseek-ai/schemastery 可选依赖）。
 //
 // 真机勘误（v0.6）：桌面 profile 对本插件是 link: 安装，import.meta.url 经 realpath
-// 落在 D:\workspace\dsh-restart-now —— 从那里向上找不到 profile node_modules 里的
+// 落在某个本地开发目录的副本里 —— 从那里向上找不到 profile node_modules 里的
 // @deepseek-ai/schemastery，首版的裸说明符解析静默失败 → Config=undefined →
 // 设置页无配置表单（「四个配置项不见了」的根因）。
 // 解析链：① DSH_HOME/DSH_PROFILE 指向的 profile package.json（link 形态）
