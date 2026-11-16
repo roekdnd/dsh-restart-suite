@@ -1,6 +1,6 @@
 {
   "name": "dsh-restart-suite",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "description": "重启应用：agent/按钮两条入口的重启，以及重启后的唤醒与续跑善后。",
   "license": "MIT",
