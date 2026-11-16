@@ -1022,7 +1022,7 @@ window.__ModuleLoader__.load({
     /**
      * 官方描边权重表。**完整规范见 `rules/references_icons.local.md`。**
      *
-     * 应用 的图标不是一个一个画的，而是从 `@deepseek-ai/dsh-client-ui-primitives`
+     * 应用的图标不是一个一个画的，而是从 `@deepseek-ai/dsh-client-ui-primitives`
      * 的 sprite 里取 `<symbol>`（`Qv` 存 path、`Vp` 存档位、`mL` 拼 sprite），
      * 粗细只有两档：
      *

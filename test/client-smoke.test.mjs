@@ -439,7 +439,7 @@ test('设置页把 meta 里的只读现状画出来', async () => {
     settings: { allowAutoRestart: true, wakeMode: 'plugin', autoSay: '重启好了', countdownSec: 5, timeoutSec: 120, logKeep: 20, launchCommand: '' },
     meta: {
       wakeModes: [{ value: 'plugin', label: '插件直投', hint: '不碰页面' }, { value: 'script', label: '脚本输入', hint: 'CDP' }],
-      scriptPath: 'C:\\app\\scripts\\Restart-应用.ps1',
+      scriptPath: 'C:\\app\\scripts\\Restart-DSH.ps1',
       stateDir: 'C:\\Users\\x\\.dsh\\dsh-restart-suite',
       logDir: 'C:\\Users\\x\\.dsh\\dsh-restart-suite\\logs',
       limits: { countdownSec: [3, 600], timeoutSec: [10, 600], logKeep: [1, 200] },
@@ -466,7 +466,7 @@ test('设置页把 meta 里的只读现状画出来', async () => {
   const values = inputs.map((el) => String(el.props.value ?? ''))
   const everything = text + '|' + values.join('|')
 
-  assert.ok(text.includes('C:\\app\\scripts\\Restart-应用.ps1'), '没画脚本路径')
+  assert.ok(text.includes('C:\\app\\scripts\\Restart-DSH.ps1'), '没画脚本路径')
   assert.ok(everything.includes('重启好了'), '没回填 autoSay')
   assert.ok(text.includes('3–600') || text.includes('3-600'), '没画倒计时范围')
   assert.ok(text.includes('退出码 0'), '没画上一次运行结果')

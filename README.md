@@ -63,7 +63,7 @@ profile 的 `dependencies` 用 `link:` 指向本目录，改源码后重启即�
 
 子代理（`session.header.origin === 'subagent'` 或有 `parentSession`）调 `restart_dsh` 会被拒绝：
 
-> 子代理不能自己重启 应用。原因：你的父代理正在等你返回结果，
+> 子代理不能自己重启应用。原因：你的父代理正在等你返回结果，
 > 重启会把整棵树一起打断，父代理和你会互相等死。
 >
 > 正确做法：把「需要重启才能验证」这件事写进你返回给 Lead 的结果里，
@@ -243,7 +243,7 @@ logs/                plugin.log / restart-*.log
 | 两段式停机 | ❌ **未接线** — `engine/helper-src.js` 已搬入但主流程没调用 | 现在靠脚本硬杀，进程可能来不及落盘 |
 | 崩溃续跑 | ❌ **已移除** — 原 `after/sweep.js`（全量扫描兜底）从未被接线，2026-11-10 删除 | 崩溃/强杀后被中断的会话不会自动续跑，需手动继续 |
 | `abort` 分支 | ⚠️ **未真机验证** — 普通 Esc 走的是 `cancel` 分支 | 只有按住「停止生成」按钮才走 `abort` |
-| 跨平台 | ❌ 仅 Windows — `Restart-应用.ps1` 是 PowerShell | macOS / Linux 无停机脚本 |
+| 跨平台 | ❌ 仅 Windows — 实际接线只到 `scripts/Restart-DSH.ps1`（PowerShell）；`engine/helper-src.js` 有 darwin/linux 分支但**未被 `index.js` 引用** | macOS / Linux 无停机脚本 |
 | 按钮逐项开关 | ❌ 未实现 — restart-now 有此功能，本包全开 | 无法单独关掉某个入口 |
 
 ## 已验证（真机）

@@ -315,7 +315,7 @@ const WAKE_REQUEST_FILE = join(STATE_DIR, 'wake-request.json')
 /**
  * 「除发起者之外，还要唤醒哪些会话」的名单。
  *
- * 为什么不塞进 wake-request.json：那份文件由 `Restart-应用.ps1` 在写 ready
+ * 为什么不塞进 wake-request.json：那份文件由 `Restart-DSH.ps1` 在写 ready
  * 阶段时**整个重建**（只保留它认识的字段），我们加的字段会被丢掉。所以单独
  * 一个文件，脚本从不碰它。
  *
@@ -943,7 +943,7 @@ async function 投递附加唤醒(getService, log, runId, sinceAt) {
     const base =
       item.text.trim().length > 0
         ? item.text.trim()
-        : '应用 已经重启（你和其它会话一起等的这次）。请确认你刚改的东西是否已生效，再继续。'
+        : '应用已经重启（你和其它会话一起等的这次）。请确认你刚改的东西是否已生效，再继续。'
     const text = decorateWakeText(base, sinceAt)
     let ok = false
     for (let i = 0; i < 6 && !ok; i += 1) {
@@ -1428,9 +1428,9 @@ export function apply(ctx, config = {}) {
    * 拉起脚本的方式。默认就是真的 spawn powershell；**只给离线测试替换**。
    *
    * 为什么留这个口子：状态机里「到点判闲 → 拉脚本」这一段是必须被测的，
-   * 但它一旦真跑起来就是去关整台 应用。没有注入点，测试要么不覆盖这一段，
+   * 但它一旦真跑起来就是去关整台应用。没有注入点，测试要么不覆盖这一段，
    * 要么就得在测试进程里祈祷脚本自己拒绝 —— 后者已经真的发生过一次
-   * （2026-11-08：测试意外拉起 Restart-应用.ps1，靠脚本的 no-plan 校验才没关机）。
+   * （2026-11-08：测试意外拉起 Restart-DSH.ps1，靠脚本的 no-plan 校验才没关机）。
    */
   const launch = typeof config.launchScript === 'function' ? config.launchScript : launchScript
 
@@ -2207,15 +2207,15 @@ export function apply(ctx, config = {}) {
       reason === 'busy'
         ? '这台机器上还有东西在跑'
         : reason === 'no-launch-plan'
-          ? '插件没法确定在这台机器上怎么重新启动 应用'
+          ? '插件没法确定在这台机器上怎么重新启动应用'
           : reason === 'plan-write-failed'
             ? '启动计划写不进磁盘'
             : reason === 'launch-failed'
               ? '拉起重启脚本失败'
               : reason === 'launch-watchdog'
-                ? '重启脚本拉起了，但 应用 一直没有退出'
+                ? '重启脚本拉起了，但应用一直没有退出'
                 : '这次重启没有发生'
-    const lines = [`重启没有发生：${why}。应用 仍在运行，这次不会自动重试。`]
+    const lines = [`重启没有发生：${why}。应用仍在运行，这次不会自动重试。`]
     if (detail) lines.push('', detail)
     lines.push(
       '',
@@ -2446,7 +2446,6 @@ export function apply(ctx, config = {}) {
     // 先落盘再动手：万一脚本把 DSH 杀了而我们自己没来得及写，唤醒就丢了。
     // 写的是两阶段文件的前半段（唤醒谁、说什么）；后半段（成没成、何时成）
     // 由脚本在拉起 DSH 之后补上，插件再来读。
-    // 先落盘再动手：万一脚本把 应用 杀了而我们自己没来得及写，唤醒就丢了。
     //
     // 合并后不再用 wake-request.json + wake-extra.json 两份文件，
     // 而是一份 roster.json —— 一份清单同时表达「唤醒谁、说什么、是哪种角色」，
@@ -2868,7 +2867,7 @@ export function apply(ctx, config = {}) {
             reason: 'subagent-forbidden',
             phase: state.phase,
             message: [
-              '子代理不能自己重启 应用。原因：你的父代理正在等你返回结果，',
+              '子代理不能自己重启应用。原因：你的父代理正在等你返回结果，',
               '重启会把整棵树一起打断，父代理和你会互相等死。',
               '',
               父会话 ? `你的父会话：${父会话}` : '（未能读出父会话 id）',
